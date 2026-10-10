@@ -11,6 +11,20 @@ BFontPlatform platform = BFont.DetectPlatform(bfotf)!.Value;
 byte[] rebuilt = BFont.Encrypt(otf, platform);              // byte for byte the original
 ```
 
+Replacing a font in a mod takes one call. It encrypts a plain font for a `.bfotf` or `.bfttf` target with the key of the
+file it replaces, or with the key the game uses for that name (`.bfttf` NX, `.bfotf` Win), and leaves a plain target plain:
+
+```csharp
+byte[] toWrite = BFont.PrepareReplacement(File.ReadAllBytes("MyFont.otf"), "Font/scft/Symbol.bfotf", existingStoredBytes);
+
+BFont.IsFontPath("a/Symbol.bfotf.zs");      // true
+BFont.IsEncryptedFontPath("a/Arial.ttf");   // false
+BFont.ToOpenFont(bytes);                    // decrypted if it is a BFTTF/BFOTF, otherwise as it is
+```
+
+Checked against all 49 fonts in the four `Font*.bfarc.zs` archives of the 1.2.1 dump: each decrypts to a font, and encrypting
+that again gives the stored bytes exactly.
+
 ## Format
 
 All big-endian. Each platform has its own 32-bit key:
@@ -28,7 +42,7 @@ All big-endian. Each platform has its own 32-bit key:
 | 0x8 | | The font, XORed with the key repeated every four bytes |
 
 `Decrypt` also reads the files older TKVSC builds wrote, which have a zero size and key the font
-with `key ^ size`.
+with `key ^ size`, and files keyed with the plain platform key and no size.
 
 ## Build
 

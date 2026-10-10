@@ -46,16 +46,68 @@ public static class BFont
 
         if (size > body.Length)
         {
+            if (body.Length < 4) return false;
+            uint first = BinaryPrimitives.ReadUInt32BigEndian(body);
             uint legacyKey = key ^ (uint)body.Length;
-            if (body.Length < 4 || !OpenFontMagics.Contains(BinaryPrimitives.ReadUInt32BigEndian(body) ^ legacyKey))
-                return false;
-            key = legacyKey;
+            if (OpenFontMagics.Contains(first ^ legacyKey)) key = legacyKey;
+            else if (!OpenFontMagics.Contains(first ^ key)) return false;
             size = (uint)body.Length;
         }
 
         font = new byte[size];
         Xor(body[..(int)size], font, key);
         return true;
+    }
+
+    // ---- by file name ----
+
+    /// <summary>True for a font file by its name: <c>.bfotf</c>, <c>.bfttf</c>, <c>.ttf</c> or <c>.otf</c>, with or without <c>.zs</c>.</summary>
+    public static bool IsFontPath(string path) => HasExtension(path, ".bfotf", ".bfttf", ".ttf", ".otf");
+
+    /// <summary>True for the names the game keeps encrypted fonts under: <c>.bfotf</c> and <c>.bfttf</c> (with or without <c>.zs</c>).</summary>
+    public static bool IsEncryptedFontPath(string path) => HasExtension(path, ".bfotf", ".bfttf");
+
+    /// <summary>
+    /// The key a font file of this name is made with in Tears of the Kingdom: <c>.bfttf</c> uses the NX key and
+    /// <c>.bfotf</c> the Win key (the game's own files all follow this). Other names get <see cref="BFontPlatform.NX"/>.
+    /// </summary>
+    public static BFontPlatform PlatformFor(string path)
+        => HasExtension(path, ".bfotf") ? BFontPlatform.Win : BFontPlatform.NX;
+
+    /// <summary>The font as an editor or font tool wants it: decrypted if it is a BFTTF/BFOTF, otherwise as it is.</summary>
+    public static byte[] ToOpenFont(byte[] data) => TryDecrypt(data, out byte[]? font) ? font : data;
+
+    /// <summary>
+    /// The bytes to write to <paramref name="targetPath"/> for an imported font. For a <c>.bfotf</c> or <c>.bfttf</c> target
+    /// that is the font encrypted, with the key of the file it replaces (<paramref name="existingTarget"/>, as stored, if given)
+    /// and otherwise the key the game uses for that name; an import that is already encrypted is kept as it is. For any other
+    /// target it is the plain font, decrypted if need be.
+    /// </summary>
+    public static byte[] PrepareReplacement(ReadOnlySpan<byte> imported, string targetPath, ReadOnlySpan<byte> existingTarget = default)
+    {
+        bool intoGameFont = IsEncryptedFontPath(targetPath);
+        if (IsEncrypted(imported))
+        {
+            if (intoGameFont) return imported.ToArray();
+            return TryDecrypt(imported, out byte[]? decrypted) && IsOpenFont(decrypted)
+                ? decrypted
+                : throw new InvalidDataException("Not a valid font file.");
+        }
+
+        if (!IsOpenFont(imported)) throw new InvalidDataException("Not a valid TrueType or OpenType font file.");
+        if (!intoGameFont) return imported.ToArray();
+
+        BFontPlatform platform = DetectPlatform(existingTarget) ?? PlatformFor(targetPath);
+        return Encrypt(imported, platform);
+    }
+
+    private static bool HasExtension(string path, params string[] extensions)
+    {
+        ReadOnlySpan<char> name = path.AsSpan();
+        if (name.EndsWith(".zs", StringComparison.OrdinalIgnoreCase)) name = name[..^3];
+        foreach (string extension in extensions)
+            if (name.EndsWith(extension, StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
     }
 
     public static byte[] Encrypt(ReadOnlySpan<byte> font, BFontPlatform platform = BFontPlatform.NX)
